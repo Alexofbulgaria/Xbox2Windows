@@ -1865,13 +1865,13 @@ struct IndirectBufferView {
 // fallback to copying an unrelated or stale title allocation into the draw upload ring.
 // why, when given, receives the condition an empty result failed on.
 IndirectBufferView indirect_table_buffer(Wrapper* self, const std::uint32_t* words, bool allow_address_alias = false,
-                                         const char** why = nullptr)
+                                         const char** why = nullptr,
+                                         u64 limit = u64{4} << D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP)
 {
     const auto refuse = [why](const char* reason) {
         if (why) *why = reason;
         return IndirectBufferView{};
     };
-    constexpr u64 limit = 16u << 20;
     u64 address = 0, offset = 0, bytes = 0;
     UINT stride = 0;
     const Wrapper* owner = nullptr;
@@ -1925,7 +1925,9 @@ IndirectBufferView indirect_table_buffer(Wrapper* self, const std::uint32_t* wor
         bytes = u64{stride ? stride : 1} * words[2];
     }
     if (!bytes) return refuse("an input buffer descriptor has zero records");
-    if (bytes > limit || bytes % 4) return refuse("an input buffer range is over 16 MiB or not whole dwords");
+    if (bytes > limit || bytes % 4) return refuse(limit == (16u << 20)
+        ? "an input buffer range is over 16 MiB or not whole dwords"
+        : "an input buffer range exceeds the D3D12 raw SRV limit or is not whole dwords");
     ID3D12Resource* native = nullptr;
     bool upload = false;
     Wrapper* device = self->own().list_device;
@@ -1939,7 +1941,7 @@ IndirectBufferView indirect_table_buffer(Wrapper* self, const std::uint32_t* wor
         if (owner && owner != placed.owner) return refuse("an input buffer view token's resource does not hold its range");
         if (!placed.owner) {
             const bool in_upload = list_upload_range(self, address, 1).resource != nullptr;
-            const auto alias = allow_address_alias && !in_upload ? indirect_address_alias(device, address, bytes) : IndirectAddressAlias{};
+            const auto alias = allow_address_alias && !in_upload && bytes <= (16u << 20) ? indirect_address_alias(device, address, bytes) : IndirectAddressAlias{};
             if (!alias.resource)
                 return refuse(in_upload ? "an input range crosses the end of its upload allocation"
                                         : "an input is in title memory outside any placed buffer");
